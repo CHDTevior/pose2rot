@@ -88,7 +88,7 @@ Key configs: `configs/train/train_pose2rot_v9_fk10ramp.yaml` (all-data) and
 
 ## Checkpoints
 
-Pretrained pose2rot checkpoints are on Hugging Face: **(see the model card linked in the repo About)**.
+Pretrained pose2rot checkpoints are on Hugging Face: **https://huggingface.co/Tevior/pose2rot**.
 - `v9` all-data (best for demos / when the species is seen)
 - `v10` held-out (the decisive paper model)
 - `v8b` earlier converged best
