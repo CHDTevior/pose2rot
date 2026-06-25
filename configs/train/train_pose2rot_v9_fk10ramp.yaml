@@ -1,0 +1,78 @@
+### train_pose2rot_v7_ddp_b4.yaml — v6 recipe (memabl+tvar) at batch4 DDP-2gpu for 3.6x throughput ###
+name: Pose2Rot training
+
+runtime:
+  device: cuda
+  seed: 42
+  debug: false
+
+output:
+  checkpoint_root: ./checkpoints/pose2rot
+
+
+experiment:
+  exp: exp_pose2rot_v9_fk10ramp_60ep
+
+model:
+  target: models.v2.pose2rot.model.Pose2RotMemoryRestModel
+  params:
+    q_dim: 256
+    rest_layers: 4
+    pose_layers: 4
+    memory_layers: 4
+    decoder_layers: 10
+    num_heads: 8
+    joint_embed_dim: 768
+    temporal_window: 2
+    temporal_dropout: 0.1
+    decoder_cond_mode: add # add | concat
+    pose_rest_film: true
+    memory_rest_film: true
+    decoder_rest_film: true
+    pose_use_graph: true
+    use_grad_checkpoint: false
+    decoder_use_cross_layers: 0   # MEMORY ABLATION: no decoder cross-attn into memory bank (kill species-constant leakage)
+
+train:
+  batch_size: 4   # DDP global batch = 4/gpu x 2 gpu = 8
+  epochs: 60
+  grad_accum_steps: 1
+  lr: 0.0002   # DDP 2-gpu global batch 8 at the proven-safe lr2e-4 (test if batch-doubling breaks anti-collapse)
+  warmup_steps: 500   # linear LR warmup 0->8e-4 (codex: tame Adam startup at large scaled LR)
+  max_ckpt: 100
+  num_workers_train: 6   # 6/proc x 2 proc = 12 of 16 cores
+  test_every: 1
+  pretrain_ckpt: null
+
+  loss:
+    rot_loss_type: smooth_l1
+    vel_loss_type: smooth_l1
+    acc_loss_type: smooth_l1
+
+  weight:
+    root_wt: 0.1
+    fk_wt: 10.0   # FK ramp END=10(用户按MoCapAnything; 比v8b的30温和, fk梯度~0.33<<grad_clip1.0 不会再亚稳发散)
+    fk_wt_start: 0.0   # 从0起(纯抗塌缩早期, 让tvar正常破塌缩)
+    fk_ramp_start_epoch: 5
+    fk_ramp_end_epoch: 15    # 线性 0->10 over epoch5-15, 之后恒10
+    vel_wt: 1.0
+    acc_wt: 1.0   # 用户要求加 acc(2阶时序平滑); 随机初始化量级~0.0095
+    rot_wt: 1.0
+    tvar_wt: 2.0   # demeaned-temporal supervision (force motion-tracking, anti-collapse)
+
+  vis_every: 5
+  weight_decay: 0.0
+
+eval:
+  batch_size: 1
+  num_workers: 2
+
+data:
+  seq_len: 48
+  bvh_dir: datasets/zoo1030/bvh
+  cache_scale: true
+  limit_species_debug: []
+  mmap: true
+  split_json: datasets/zoo1030/selected_test_split1010.json
+  train_memory_pkl_path: datasets/zoo1030/cache/species_fps_memory_yAll/fps_select_by_rot_32.pkl
+  test_memory_pkl_path: datasets/zoo1030/cache/species_fps_memory_yAll/fps_select_by_rot_32.pkl
