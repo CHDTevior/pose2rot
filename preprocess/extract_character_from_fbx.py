@@ -251,8 +251,8 @@ def find_base_fbx(fbx_files, character_name):
 if __name__ == "__main__":
     import utils.bvh as BVH  # kept for the optional face-forward step below
 
-    data_root = 'Truebone_Z-OO'
-    target_folder = 'zoo'
+    data_root = os.environ.get('FBX_ROOT', 'Truebone_Z-OO')
+    target_folder = os.environ.get('ZOO_OUT', 'zoo')
     os.makedirs(target_folder, exist_ok=True)
 
     character_folder = os.path.join(target_folder, 'characters_fix_facezplus')
@@ -265,6 +265,11 @@ if __name__ == "__main__":
     character_dirs = sorted(
         d for d in glob(os.path.join(data_root, "*")) if os.path.isdir(d)
     )
+
+    only_species = os.environ.get('ONLY_SPECIES', '').strip()
+    if only_species:
+        wanted = {s.strip() for s in only_species.split(',') if s.strip()}
+        character_dirs = [d for d in character_dirs if os.path.basename(d) in wanted]
 
     for char_dir in character_dirs:
         character_name = os.path.basename(char_dir)

@@ -16,7 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 from data.loader_v2 import AnySpeciesPoseDataset, collate_anyspecies_padded
 from utils.config_utils import instantiate_from_config
 from utils.common import set_seed
-from utils.rotation import bvh_forward, rot6d_to_fk_positions, rot6d_to_rotmat_tensor
+from utils.rotation import bvh_forward, rot6d_to_fk_positions, rot6d_to_fk_positions_correct, rot6d_to_rotmat_tensor
 from utils.dist_utils import *
 from utils.loss import compute_rot_loss, get_loss_fn, masked_loss, rot6d_vel_loss, rot6d_acc_loss, angle_L1, angle_velocity_L1
 from utils.train_utils import *
@@ -40,8 +40,6 @@ def evaluate_batch_metrics(model_out, batch):
     target_pose = batch["position"]
 
     parents = batch["parent_a"]
-    offsets = batch["offset_a"]
-    global_scales = batch["global_scale"]
 
     pred_rot6d = model_out["pred_rot6d"]
 
@@ -53,7 +51,10 @@ def evaluate_batch_metrics(model_out, batch):
     metrics["angle_l1"] = angle_L1(pred_rot6d, gt_rot6d, mask=rot_mask_np)
     metrics["anglevel_l1"] = angle_velocity_L1(pred_rot6d, gt_rot6d, mask=rot_mask_np)
 
-    pred_pos = rot6d_to_fk_positions(pred_rot6d, offsets, parents, global_scales)
+    # Use the CORRECT FK (rotation_6d_to_matrix row-convention + parent-local fk_offset),
+    # same as the training FK-position loss (utils/loss.py:284). The stale
+    # rot6d_to_fk_positions(offset_a) had FK(GT)!=position, making eval fk_l1 meaningless.
+    pred_pos = rot6d_to_fk_positions_correct(pred_rot6d, batch["fk_offset"], parents)
     metrics["fk_l1"] = masked_loss(
         pred_pos,
         target_pose,
@@ -224,7 +225,8 @@ def train_pose2rot(cfg):
         split_json=data_cfg["split_json"],
         split_mode="train",
         memory_pkl_path=data_cfg.get("train_memory_pkl_path", None),
-        preload_all=False
+        preload_all=False,
+        image_embed_mode=data_cfg.get("image_embed_mode", None),
     )
 
     dataset_test = AnySpeciesPoseDataset(
@@ -236,7 +238,8 @@ def train_pose2rot(cfg):
         split_json=data_cfg["split_json"],
         split_mode="test",
         memory_pkl_path=data_cfg.get("test_memory_pkl_path", data_cfg.get("train_memory_pkl_path", None)),
-        preload_all=False
+        preload_all=False,
+        image_embed_mode=data_cfg.get("image_embed_mode", None),
     )
 
     sampler_train = DistributedSampler(dataset_train, num_replicas=world_size, rank=rank, shuffle=True) if distributed else None

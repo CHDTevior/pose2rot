@@ -23,8 +23,9 @@ rotations = [
 ]
 save_names = ['y0', 'y15', 'y30', 'y45', 'y60', 'y75', 'y90', 'y135', 'y180', 'y225', 'y270', 'y315']
 
-bvh_directory = 'zoo/motions'
-output_directory = 'zoo/bvh'
+_zoo = os.environ.get('ZOO_OUT', 'zoo')
+bvh_directory = os.path.join(_zoo, 'motions')
+output_directory = os.path.join(_zoo, 'bvh')
 os.makedirs(output_directory, exist_ok=True)
 
 def rotate_bvh(base_bvh_path, rotation, save_path):

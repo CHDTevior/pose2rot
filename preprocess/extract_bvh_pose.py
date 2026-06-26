@@ -200,9 +200,9 @@ def process_bvh_root(bvh_root, out_pose_npz_root,
 
 # ==== Usage example ====
 if __name__ == "__main__":
-    zoo_root = "zoo"
+    zoo_root = os.environ.get('ZOO_OUT', 'zoo')
     bvh_root = os.path.join(zoo_root, "bvh")
     out_pose_npz_root = os.path.join(zoo_root, "bvh_pose")
 
     process_bvh_root(bvh_root, out_pose_npz_root,
-                     auto_scale="base_mesh", fps=30)
+                     auto_scale=os.environ.get('POSE_AUTOSCALE', 'base_mesh'), fps=30)

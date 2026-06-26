@@ -34,6 +34,7 @@ class AnySpeciesPoseDataset(Dataset):
         max_mesh_points: int = 1024,
         memory_pkl_path: Optional[str] = None,
         preload_all: bool = True,
+        image_embed_mode: Optional[str] = None,
     ):
         self.bvh_dir = bvh_dir
         root = os.path.dirname(bvh_dir)
@@ -54,6 +55,11 @@ class AnySpeciesPoseDataset(Dataset):
         self.split_group = split_group
         self.max_mesh_points = max_mesh_points
         self.preload_all = preload_all
+        # image_embed_mode: 'dummy' -> synthesize zeros[F,1,1] instead of loading the
+        # on-disk npz['image_embed'] (pose2rot is image-free; this avoids the collate
+        # np.stack crash when a batch mixes real [F,257,1024] render embeds with [F,1,1]
+        # stubs). Default (None / 'real') loads the on-disk embed for the video pipeline.
+        self.image_embed_mode = image_embed_mode
 
         # =========================================================
         # just add memory pkl
@@ -407,11 +413,15 @@ class AnySpeciesPoseDataset(Dataset):
                 continue
 
             pose_npz = np.load(it["pose"], allow_pickle=False)
-            train_npz = np.load(it["train"], allow_pickle=False)
 
             position = pose_npz["position"].astype(np.float32)   # [F, J, 3]
             rot6d = pose_npz["rot6d"].astype(np.float32)         # [F, J, 6]
-            image_embed = train_npz["image_embed"].astype(np.float32)
+            if self.image_embed_mode == "dummy":
+                train_npz = None
+                image_embed = np.zeros((position.shape[0], 1, 1), dtype=np.float32)
+            else:
+                train_npz = np.load(it["train"], allow_pickle=False)
+                image_embed = train_npz["image_embed"].astype(np.float32)
 
             F_pose = position.shape[0]
             F_img  = image_embed.shape[0]
@@ -451,7 +461,8 @@ class AnySpeciesPoseDataset(Dataset):
             })
 
             pose_npz.close()
-            train_npz.close()
+            if train_npz is not None:
+                train_npz.close()
 
         logger.info(f"preload completed: {len(data_cache)} sequences")
         if skipped:
@@ -472,11 +483,15 @@ class AnySpeciesPoseDataset(Dataset):
             raise KeyError(f"{species_name} missing in species_static_cache")
 
         pose_npz = np.load(it["pose"], mmap_mode='r' if self.mmap else None, allow_pickle=False)
-        train_npz = np.load(it["train"], mmap_mode='r' if self.mmap else None, allow_pickle=False)
 
         position = pose_npz["position"].astype(np.float32)
         rot6d = pose_npz["rot6d"].astype(np.float32)
-        image_embed = train_npz["image_embed"].astype(np.float32)
+        if self.image_embed_mode == "dummy":
+            train_npz = None
+            image_embed = np.zeros((position.shape[0], 1, 1), dtype=np.float32)
+        else:
+            train_npz = np.load(it["train"], mmap_mode='r' if self.mmap else None, allow_pickle=False)
+            image_embed = train_npz["image_embed"].astype(np.float32)
 
         F_pose = position.shape[0]
         F_img  = image_embed.shape[0]
@@ -501,7 +516,8 @@ class AnySpeciesPoseDataset(Dataset):
         rest_pose = (rest_pose - rest_pose[:, 0:1, :]) / gscale
 
         pose_npz.close()
-        train_npz.close()
+        if train_npz is not None:
+            train_npz.close()
 
         return {
             "rel": rel,

@@ -303,9 +303,15 @@ def extract_mesh_from_bvh(
     scale: float = 1.0,
     mesh_scale: float = 1.0,
     azim: float = 0.0,
+    write_npy: bool = False,
 ):
     """
     Extract mesh animation from a BVH file and save as mesh sequence.
+
+    write_npy: fast path -- dump deformed vertices as a single binary
+    ``verts.npy`` [F, V, 3] instead of per-frame OBJ text files (identical
+    geometry; Blender loads the base mesh once and updates verts per frame,
+    skipping the slow per-frame OBJ text parse).
     """
     skin_weights = torch.from_numpy(np.load(lbs_weights_pth))
     temp_vertices, temp_faces, temp_uvs, temp_face_uvs = read_obj_mesh(template_pth)
@@ -330,12 +336,17 @@ def extract_mesh_from_bvh(
         compute_rest_joints(anim.offsets, anim.parents)
     )
 
+    # GPU-accelerate LBS when CUDA is available: the numpy/CPU skinning is the
+    # real render-pipeline bottleneck (per-worker CPU saturates the node while
+    # the GPU sits idle). lbs() is device-aware, so moving the inputs to CUDA
+    # runs skinning on the (otherwise idle) GPU and frees the CPU.
+    _dev = 'cuda' if torch.cuda.is_available() else 'cpu'
     verts, J_transformed = lbs(
-        pose.float(),
-        v_template.float(),
-        rest_joints.repeat(pose.shape[0], 1, 1).float(),
+        pose.float().to(_dev),
+        v_template.float().to(_dev),
+        rest_joints.repeat(pose.shape[0], 1, 1).float().to(_dev),
         anim.parents,
-        skin_weights.float(),
+        skin_weights.float().to(_dev),
     )
 
     trans_torch = torch.from_numpy(trans).to(dtype=verts.dtype, device=verts.device)
@@ -356,7 +367,11 @@ def extract_mesh_from_bvh(
     os.makedirs(save_root, exist_ok=True)
     has_uv = temp_uvs is not None and temp_face_uvs is not None
 
-    for i in tqdm(range(verts.shape[0]), desc="exporting mesh"):
+    if write_npy:
+        np.save(os.path.join(save_root, "verts.npy"),
+                verts.detach().cpu().numpy().astype(np.float32))  # [F, V, 3]
+
+    for i in tqdm(range(0 if write_npy else verts.shape[0]), desc="exporting mesh"):
         frame_vertices = verts[i].detach().cpu().numpy()
         out_path = os.path.join(save_root, f"{i:04d}.{mesh_format}")
 
@@ -418,10 +433,14 @@ def blender_visualize_character_motion(
     auto_scale: Literal[None, "bvh", "base_mesh"] = None,
     mesh_scale: float = 1.0,
     azim: float = 0.0,
+    fast_npy: bool = False,
 ) -> None:
     """
     Visualize character motion by converting BVH animation to a mesh sequence,
     rotating it by azim inside mesh extraction, then rendering it in Blender.
+
+    fast_npy: write per-frame vertices as one binary verts.npy and render via
+    direct vertex updates (skips slow per-frame OBJ text I/O; same geometry).
     """
 
     mesh_path = os.path.join(output_dir, "mesh")
@@ -461,6 +480,7 @@ def blender_visualize_character_motion(
         scale=scale,
         mesh_scale=mesh_scale,
         azim=azim,
+        write_npy=fast_npy,
     )
 
     root_pos_sm = sm_loop(root_pos, traj_smooth)
@@ -494,6 +514,7 @@ def blender_visualize_character_motion(
         camera_traj=camera_traj_pth,
         bg_color=bg_color,
         video_name=motion_name,
+        fast_npy=fast_npy,
     )
 
 
@@ -510,6 +531,7 @@ def blender_visualize_single_mesh_sequence(
     bg_color=(255, 255, 255),
     video_name: str = "video",
     log_file: str = None,
+    fast_npy: bool = False,
 ) -> None:
     """
     Render a sequence of mesh frames using Blender and generate a video.
@@ -534,6 +556,8 @@ def blender_visualize_single_mesh_sequence(
 
     if character_folder:
         blender_cmd += ["--use-mtl", "--character-folder", character_folder]
+    if fast_npy:
+        blender_cmd += ["--verts-npy", os.path.join(object_path, "verts.npy")]
     if hdri_path:
         blender_cmd += ["--hdri", hdri_path]
     if camera_traj:

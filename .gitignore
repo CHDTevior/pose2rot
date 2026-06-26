@@ -12,3 +12,4 @@ cache/
 logs/
 *.log
 artifacts/
+*.blend1
